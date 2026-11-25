@@ -819,7 +819,7 @@ export def "st depurar" [
     }
 
     # 6) Guardar en CSV y Parquet (preservando tipos nativos en Parquet)
-    $tabla_final | to csv | save -f $salida_csv
+    $tabla_final | update fecha_hora_utc { |r| $r.fecha_hora_utc | format date "%Y-%m-%dT%H:%M:%SZ" } | to csv | save -f $salida_csv
     try {
         $tabla_final | update fecha_hora_utc { |r| $r.fecha_hora_utc | format date "%Y-%m-%dT%H:%M:%SZ" } | polars into-df --schema { appid: i64, nombre: str, fecha_hora_utc: str, hora_chile: i64, jugadores: f64, variacion_prev: f64, gratis: i64, precio_final: i64, sube: f64 } | polars save ($env.PWD | path join $salida_parquet)
     } catch { |e|
