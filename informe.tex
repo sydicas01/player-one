@@ -1,0 +1,361 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!60!black,citecolor=blue!60!black]{hyperref}
+
+\definecolor{codebg}{RGB}{247,247,249}
+\definecolor{codeframe}{RGB}{210,210,220}
+\definecolor{codecomment}{RGB}{95,110,125}
+\definecolor{codekw}{RGB}{0,90,160}
+
+\lstset{
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    breakatwhitespace=true,
+    columns=flexible,
+    keepspaces=true,
+    showstringspaces=false,
+    commentstyle=\color{codecomment}\itshape,
+    keywordstyle=\color{codekw}\bfseries,
+    literate=
+      {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+      {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1
+      {ñ}{{\~n}}1 {Ñ}{{\~N}}1 {¿}{{?`}}1 {¡}{{!`}}1
+}
+
+\begin{document}
+
+% ==============================================================================
+% PORTADA
+% ==============================================================================
+\begin{titlepage}
+    \centering
+    \vspace*{1.5cm}
+    {\Large \textbf{UNIVERSIDAD DEL BÍO-BÍO}\par}
+    \vspace{0.2cm}
+    {\large Facultad de Ciencias --- Departamento de Estadística\par}
+    \vspace{0.2cm}
+    {\normalsize Ciencia de Datos en la Terminal Linux\par}
+
+    \vspace{2.5cm}
+    \rule{\textwidth}{0.8pt}\\[0.5cm]
+    {\LARGE \textbf{«Player One»: Radar de Videojuegos en Steam}\par}
+    \vspace{0.3cm}
+    {\large Comandos en Nushell y Pipeline Reproducible de Ciencia de Datos\par}
+    \rule{\textwidth}{0.8pt}
+
+    \vspace{2.5cm}
+    \begin{flushleft}
+        \large
+        \textbf{Integrante(s):}  Diego Castro Saaveadra - Rodolfo Espinoza \\[0.3cm]
+        \textbf{Profesor:} Luis Gómez Guzmán \\[0.3cm]
+        \textbf{Repositorio GitHub:} \url{https://github.com/sydicas01/player-one} \\[0.3cm]
+        \textbf{Entorno:} Nushell 0.116.0 (plugin \texttt{polars} 0.116.1), GNU Parallel, \texttt{curl}, \texttt{jq}, R 4.3.3 (WSL2 Ubuntu 24.04)
+    \end{flushleft}
+
+    \vfill
+    {\large Noviembre de 2026\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ==============================================================================
+% 1. INTRODUCCIÓN Y ARQUITECTURA GENERAL
+% ==============================================================================
+\section{Introducción y Arquitectura de Player One}
+
+\textbf{Player One} es una consola de monitoreo y análisis estadístico del catálogo y actividad en vivo de Steam, construida íntegramente en \textbf{Nushell} dentro de un único archivo modular (\texttt{player\_one.nu}), complementado por un script mínimo en \textbf{R} (\texttt{motor\_logistico.R}) dedicado exclusivamente al ajuste numérico de la regresión logística.
+
+\subsection{Cumplimiento de reglas de diseño y reproducibilidad}
+\begin{itemize}
+    \item \textbf{Independencia de intérprete:} todos los comandos utilizan únicamente primitivas nativas de Nushell (\texttt{http get}, \texttt{http post}, \texttt{url join}, \texttt{into datetime}, \texttt{date to-timezone}, \texttt{math}, \texttt{polars}, etc.), sin depender de utilidades como \texttt{sed} o \texttt{printf}. Las únicas herramientas externas invocadas son las explícitamente requeridas por la pauta: \texttt{jq} y GNU \texttt{parallel} sobre archivos JSON locales en la etapa de depuración, \texttt{curl} y \texttt{jq} para contrastes independientes, y \texttt{Rscript} exclusivamente para ajustar el modelo logístico.
+    \item \textbf{Tipado nativo:} los montos monetarios, conteos de jugadores, porcentajes de logros, horas de Chile y métricas se almacenan como \texttt{int} o \texttt{float}, y las fechas se manipulan como \texttt{datetime} nativo de Nushell (serializadas en formato estándar ISO-8601 al exportar a CSV con \texttt{to csv} y a Parquet mediante Polars).
+    \item \textbf{Privacidad y credenciales:} toda solicitud HTTP incluye un encabezado identificable \texttt{User-Agent: PlayerOne-UBB/1.0 (<correo>)} construido dinámicamente desde la variable de entorno \texttt{\$env.PLAYER\_ONE\_EMAIL}. Ningún correo personal se escribe en el código ni se sube al repositorio.
+    \item \textbf{Control de tráfico y caché:} todas las consultas a Steam se ejecutan de forma estrictamente serial (con \texttt{each} o \texttt{for}; nunca \texttt{par-each} ni GNU \texttt{parallel}). Las fichas de la tienda (\texttt{appdetails}) se almacenan en caché en disco (\texttt{data/cache/}) con vigencia de 12 horas verificada mediante \texttt{((date now) - modified) < 12hr}. El conteo de jugadores conectados nunca se guarda en caché.
+    \item \textbf{Control de versiones:} el desarrollo se gestionó en Git y GitHub mediante ramas dedicadas y commits descriptivos, excluyendo archivos temporales y caché mediante \texttt{.gitignore} y conservando las tablas reproducibles (\texttt{seleccion.csv}, \texttt{mediciones\_raw.csv}, \texttt{depurada.csv}, \texttt{depurada.parquet} y los artefactos de exploración y modelación).
+\end{itemize}
+
+% ==============================================================================
+% 2. COMANDOS SOBRE STEAM
+% ==============================================================================
+\section{Comandos sobre Steam (Parte 1)}
+
+\subsection{Endpoints utilizados y estructura de las respuestas}
+
+La Tabla~\ref{tab:endpoints} resume los endpoints consultados. Ninguno requiere cuenta ni clave de API; los endpoints de la tienda carecen de documentación oficial y se exploraron directamente con Nushell, \texttt{curl} y \texttt{jq}.
+
+\begin{table}[H]
+\centering
+\caption{Endpoints HTTP utilizados en \texttt{player\_one.nu}.}
+\label{tab:endpoints}
+\footnotesize
+\begin{tabular}{@{}p{2.3cm}p{5.5cm}p{7.2cm}@{}}
+\toprule
+\textbf{Tipo} & \textbf{Endpoint} & \textbf{Estructura clave de respuesta} \\
+\midrule
+Tienda \newline (no oficial) & \path{store.steampowered.com/api/storesearch/} & Objeto con arreglo \texttt{items[]}; cada ítem trae \texttt{id}, \texttt{name}, \texttt{type} y objeto opcional \texttt{price.currency}, \texttt{price.final}. \\
+\addlinespace
+Tienda \newline (no oficial) & \path{store.steampowered.com/api/appdetails} & Objeto indexado por clave \texttt{"<appid>"} con booleano \texttt{success} y objeto \texttt{data} (\texttt{name}, \texttt{type}, \texttt{is\_free}, \texttt{release\_date}, \texttt{developers}, \texttt{genres}, \texttt{price\_overview}, \texttt{metacritic}). \\
+\addlinespace
+Oficial \newline (sin clave) & \path{api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/} & Objeto \texttt{response} con \texttt{player\_count} y código \texttt{result} (1 si tuvo éxito). No incluye marca de tiempo. \\
+\addlinespace
+Oficial \newline (sin clave) & \path{api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/} & Objeto \texttt{achievementpercentages.achievements[]} con \texttt{name} (identificador interno) y \texttt{percent}. \\
+\addlinespace
+Pruebas \newline (POST) & \path{jsonplaceholder.typicode.com/posts} & Retorna código HTTP \texttt{201} y el objeto JSON enviado más el campo \texttt{id} asignado. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Decisiones de procesamiento y helpers internos}
+\begin{itemize}
+    \item \textbf{Regla de precios en Chile (CLP):} al inspeccionar las respuestas de la tienda para \texttt{cc=CL} y contrastarlas con la página web de Steam (por ejemplo, \emph{Portal 2}, AppID \texttt{620}), se verificó que los precios llegan como enteros multiplicados por 100 (\texttt{649900} corresponde a \texttt{6.499 CLP}). El helper \texttt{st-normalizar-precio} aplica división entera (\texttt{// 100}) cuando la moneda es \texttt{CLP} y división decimal (\texttt{/ 100}) para otras monedas. Los juegos gratuitos (\texttt{is\_free: true} o sin bloque \texttt{price} en \texttt{storesearch}) se registran con \texttt{precio\_final = 0}.
+    \item \textbf{Manejo de errores HTTP y \texttt{success: false}:} el helper \texttt{st-http-get} utiliza \texttt{http get -ef} para capturar el código de estado. Ante un código \texttt{429} (\emph{Too Many Requests}), detiene la consulta con un mensaje claro solicitando evitar repeticiones. En \texttt{appdetails}, si la API retorna \texttt{success: false} (por ejemplo, AppID inexistente o restringido regionalmente), se lanza un error descriptivo y no se guarda la respuesta fallida en caché.
+    \item \textbf{Conversión de fechas:} como la tienda en español devuelve fechas textuales con abreviaturas en castellano (ej. \texttt{"18 ABR 2011"}), el helper \texttt{st-parse-fecha} normaliza las abreviaturas de meses (\texttt{ene}, \texttt{abr}, \texttt{ago}, \texttt{sept}, \texttt{dic}) a formato estándar para parsearlas a \texttt{datetime}, devolviendo \texttt{null} cuando el campo falta o indica lanzamiento futuro.
+\end{itemize}
+
+\subsection{Desarrollo de los cinco comandos}
+\begin{enumerate}
+    \item \textbf{\texttt{st buscar <texto>}:} consulta \texttt{storesearch} con flags \texttt{--pais/-p} (predeterminado \texttt{CL}), \texttt{--idioma/-l} (predeterminado \texttt{spanish}) y \texttt{--limite/-n} (predeterminado \texttt{10}). Devuelve una tabla tipada con \texttt{appid}, \texttt{nombre}, \texttt{tipo}, \texttt{moneda} y \texttt{precio\_final}.
+    \item \textbf{\texttt{st juego <appid>}:} invoca \texttt{st-ficha-raw} (con caché de 12 horas) y retorna un registro con \texttt{nombre}, \texttt{tipo}, \texttt{fecha\_lanzamiento} (\texttt{datetime}), \texttt{desarrolladores}, \texttt{generos}, \texttt{moneda}, \texttt{precio\_inicial}, \texttt{precio\_final}, \texttt{descuento\_pct} y \texttt{metacritic}, dejando \texttt{null} en los campos ausentes. Se verificó con \texttt{st juego 620 | describe} que cada campo conserva su tipo nativo (\texttt{datetime} e \texttt{int}).
+    \item \textbf{\texttt{st jugadores <appid>...}:} utiliza parámetro \texttt{rest} (\texttt{...appids: int}), consulta en serie \texttt{GetNumberOfCurrentPlayers} (sin caché), obtiene el nombre desde la ficha en caché y ordena el resultado de mayor a menor según \texttt{jugadores}.
+    \item \textbf{\texttt{st logros <appid>}:} implementa \texttt{--raros/-r <n>} y \texttt{--comunes/-c <n>}; valida al inicio que ambas flags no se entreguen simultáneamente (error de uso mediante \texttt{error make}). Si el juego carece de logros o la API responde sin lista, informa el caso sin interrumpir el flujo.
+    \item \textbf{\texttt{st reportar <appid>}:} reutiliza \texttt{st juego} y \texttt{st jugadores}, construye un cuerpo JSON con \texttt{title}, \texttt{body} (resumen con precio y jugadores conectados) y \texttt{userId}, lo envía mediante \texttt{http post -ef -t application/json} a JSONPlaceholder, maneja errores de red o códigos fuera de \texttt{2xx}, y devuelve \texttt{codigo\_http} (\texttt{201}) junto a la respuesta del servicio.
+\end{enumerate}
+
+\subsection{Contrastes independientes con \texttt{curl} y \texttt{jq}}
+
+Para validar la exactitud de los comandos desarrollados en Nushell, se contrastaron tres comandos contra consultas independientes con \texttt{curl} y \texttt{jq}.
+
+\paragraph{1. Búsqueda (\texttt{st buscar "portal" -n 3}):}
+\begin{lstlisting}[language=bash]
+curl -s -A "PlayerOne-UBB/1.0 ($PLAYER_ONE_EMAIL)" \
+  "https://store.steampowered.com/api/storesearch/?term=portal&cc=CL&l=spanish" \
+| jq '.items[:3] | map({appid: .id, nombre: .name, tipo: .type,
+      moneda: (.price.currency // null),
+      precio_final: (if .price.final then (.price.final / 100) else 0 end)})'
+\end{lstlisting}
+\noindent Resultado verificado: coincidió exactamente en los tres registros retornados (\emph{Portal 2}: AppID \texttt{620}, \texttt{6499 CLP}; \emph{Portal}: AppID \texttt{400}, \texttt{6499 CLP}; \emph{Portal Knights}: AppID \texttt{374040}, \texttt{1425 CLP}).
+
+\paragraph{2. Ficha de juego (\texttt{st juego 620}):}
+\begin{lstlisting}[language=bash]
+curl -s -A "PlayerOne-UBB/1.0 ($PLAYER_ONE_EMAIL)" \
+  "https://store.steampowered.com/api/appdetails?appids=620&cc=CL&l=spanish" \
+| jq '.["620"].data | {nombre: .name, tipo: .type, fecha: .release_date.date,
+      moneda: .price_overview.currency,
+      precio_inicial: (.price_overview.initial / 100),
+      precio_final: (.price_overview.final / 100),
+      descuento: .price_overview.discount_percent,
+      metacritic: .metacritic.score}'
+\end{lstlisting}
+\noindent Resultado verificado: \emph{Portal 2}, tipo \texttt{game}, fecha \texttt{18 ABR 2011} (parseada a \texttt{2011-04-18T00:00:00Z} en Nushell), \texttt{6499 CLP}, descuento \texttt{0\%} y Metacritic \texttt{95}.
+
+\paragraph{3. Jugadores conectados (\texttt{st jugadores 730}):}
+\begin{lstlisting}[language=bash]
+curl -s -A "PlayerOne-UBB/1.0 ($PLAYER_ONE_EMAIL)" \
+  "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=730" \
+| jq '.response'
+\end{lstlisting}
+\noindent Resultado verificado: \texttt{\{"player\_count": 430762, "result": 1\}}, idéntico al valor entero reportado por \texttt{st jugadores 730} en ese mismo instante. Adicionalmente, se verificó el manejo de casos borde: \texttt{st logros 620 -r 3 -c 3} rechazó la llamada por error de uso y \texttt{st juego 99999999} informó \texttt{success: false} de forma controlada.
+
+% ==============================================================================
+% 3. PIPELINE DE CIENCIA DE DATOS: OBSERVATORIO
+% ==============================================================================
+\section{Pipeline de Ciencia de Datos: Observatorio (Parte 2)}
+
+El observatorio se estructuró en cinco etapas independientes (\texttt{st seleccionar}, \texttt{st medir}, \texttt{st depurar}, \texttt{st explorar} y \texttt{st modelar}), orquestadas secuencialmente por \texttt{st pipeline}. El interruptor \texttt{--omitir-medicion} permite reproducir íntegramente la depuración, exploración y modelación sobre la serie ya descargada en disco sin volver a consultar a Steam.
+
+\subsection{Obtención: selección y medición}
+
+\subsubsection{Selección de juegos (\texttt{st seleccionar})}
+Se implementó la fuente \texttt{--appids <lista>} con todas las flags predeterminadas exigidas (\texttt{--n 10}, \texttt{--pais CL}, \texttt{--tipo game}, \texttt{--min-jugadores 500}, \texttt{--max-consultas 80}). Se eligió \texttt{--appids} sobre \texttt{--terminos} por tres motivos: (i) garantiza 100\% de reproducibilidad independiente de los cambios en el ranking de búsqueda de Steam; (ii) evita consumir consultas en contenidos descargables (DLC), bandas sonoras o títulos inactivos; y (iii) permite diseñar una muestra equilibrada de exactamente \textbf{5 juegos gratuitos} y \textbf{5 juegos de pago} con precios variados en CLP y bases activas por sobre el umbral de 500 jugadores.
+
+Se entregaron 14 candidatos (10 principales y 4 de respaldo). En la ejecución con todas las flags en su valor predeterminado (sin necesidad de ajustar ningún parámetro), se revisaron \textbf{10 candidatos} (10/80 consultas), se omitieron \textbf{0} (0 por \texttt{success: false}, 0 por tipo, 0 por jugadores y 0 por error HTTP) y se conservaron los \textbf{10 juegos} requeridos, guardando sus fichas (\texttt{ficha\_<id>.json}) y logros (\texttt{logros\_<id>.json}) en \texttt{data/raw/} y la tabla maestra en \texttt{data/seleccion.csv}.
+
+Para verificar el comportamiento frente a registros inválidos o no elegibles, se ejecutó adicionalmente \texttt{st seleccionar --appids [99999999 480 730] --n 1 --salida /tmp/prueba\_sel.csv}: se revisaron 3 candidatos, se omitieron \textbf{2} (\texttt{success: false: 2}, correspondientes a \texttt{99999999} y \texttt{480}) y se conservó \textbf{1} (\emph{Counter-Strike 2}, AppID \texttt{730}, con \texttt{1\,039\,923} jugadores al momento de la prueba).
+
+\subsubsection{Medición horaria (\texttt{st medir})}
+Dado que \texttt{GetNumberOfCurrentPlayers} no devuelve marca de tiempo en su JSON, \texttt{st medir} incorpora la fecha y hora UTC exacta de cada consulta en el nombre del archivo \\(\texttt{med\_<appid>\_<YYYYMMDDTHHMMSSZ>.json}) dentro de \texttt{data/raw/}. Las consultas se ejecutan en serie (pausa de \texttt{400ms} entre juegos) dentro de un bucle \texttt{for} de 72 rondas que duerme el remanente hasta completar \texttt{1hr} entre rondas. Para tolerar fallos de red o cortes transitorios, cada consulta se envuelve en \texttt{try/catch}: ante un error, el comando guarda un archivo JSON con \texttt{player\_count: null} y \texttt{faltante: true} y continúa la ejecución sin interrumpir la serie.
+
+La medición se ejecutó de forma continua desde el \textbf{23 de noviembre de 2026 a las 22:25:41 hora de Chile} (24 de noviembre \texttt{01:25:41Z}) hasta el \textbf{26 de noviembre de 2026 a las 17:05:57 hora de Chile}, completando las \textbf{72 rondas} con \textbf{720 mediciones exitosas} y \textbf{0 fallos de API}. En el registro de rondas se observaron intervalos reales cercanos a 55--58 minutos entre inicios consecutivos (por ejemplo, \texttt{22:25:41}, \texttt{23:21:40}, \texttt{00:17:02}, \texttt{01:12:28}), asociados a la deriva del temporizador en WSL2, por lo que las 72 rondas abarcaron \textbf{68 horas} de la grilla horaria UTC. Como limitación metodológica, al truncar cada marca de tiempo a su hora UTC, los pasos consecutivos representan intervalos reales ligeramente variables alrededor de una hora.
+
+\subsection{Depuración (\texttt{st depurar})}
+
+La etapa de depuración construye la tabla unificada con las nueve columnas solicitadas (\texttt{appid}, \texttt{nombre}, \texttt{fecha\_hora\_utc}, \texttt{hora\_chile}, \texttt{jugadores}, \texttt{variacion\_prev}, \texttt{gratis}, \texttt{precio\_final} y \texttt{sube}), guardándola en \texttt{data/depurada.csv} y \texttt{data/depurada.parquet}. Las decisiones aplicadas fueron:
+
+\begin{enumerate}
+    \item \textbf{Conversión paralela local (\texttt{jq} + GNU \texttt{parallel}):} los \textbf{730 archivos JSON} locales en \texttt{data/raw/med\_*.json} se procesaron en paralelo con \texttt{parallel --keep-order -q jq -r ... '\{\}'}, extrayendo \texttt{appid} y \texttt{ts\_utc\_raw} desde el nombre del archivo junto a \texttt{player\_count} y \texttt{result}, generando \texttt{data/mediciones\_raw.csv}.
+    \item \textbf{Asignación a hora UTC y deduplicación:} cada marca de tiempo se trunca a su hora UTC (\texttt{HH:00:00Z}). Si existen múltiples mediciones del mismo juego dentro de la misma hora UTC, se prioriza la primera medición válida y se descartan las repetidas. Sobre las \textbf{730 filas crudas} (720 de las 72 rondas más 10 de una ejecución duplicada puntual durante la segunda hora), se descartaron exactamente \textbf{50 duplicados}: \textbf{10} correspondientes a dicha ejecución accidental y \textbf{40} (4 rondas $\times$ 10 juegos) originados cuando el avance menor a 60 minutos hizo coincidir dos rondas en la misma hora UTC.
+    \item \textbf{Faltantes y valores anómalos:} se genera la grilla completa \texttt{(min\_hora..max\_hora) $\times$ 10 juegos} (\textbf{68 horas $\times$ 10 juegos = 680 filas}). Cualquier hueco horario, error de API (\texttt{result != 1}) o conteo \texttt{<= 0} jugadores se asigna como \texttt{null}, ya que todos los títulos seleccionados mantienen más de mil jugadores activos en operación normal. Se registraron \textbf{0 faltantes por error de API}, \textbf{0 por hueco horario} y \textbf{1 valor anómalo} (\texttt{0} jugadores en \emph{Team Fortress 2}), quedando \textbf{679 mediciones válidas}.
+    \item \textbf{Zona horaria, formato de exportación y cruce con selección:} en Nushell las fechas se manipulan como \texttt{datetime} y se deriva \texttt{hora\_chile} (entero \texttt{0..23}) con \texttt{date to-timezone "America/Santiago"}, uniendo \texttt{nombre}, \texttt{precio\_final} y \texttt{gratis} desde \texttt{data/seleccion.csv}. El archivo \texttt{data/depurada.csv} se exporta directamente con \texttt{to csv} de Nushell (formateando \texttt{fecha\_hora\_utc} en estándar ISO-8601), mientras que \texttt{data/depurada.parquet} se guarda mediante Polars declarando \texttt{fecha\_hora\_utc: str} en el esquema explícito para evitar errores de inferencia cuando existen columnas con valores nulos.
+    \item \textbf{Construcción de \texttt{variacion\_prev} y \texttt{sube}:}
+    \begin{itemize}
+        \item $\texttt{variacion\_prev}_t = \ln(\texttt{jugadores}_t) - \ln(\texttt{jugadores}_{t-1})$, calculada únicamente si existe medición válida exactamente \texttt{1hr} antes en la grilla. Se registraron \textbf{12 filas} sin \texttt{variacion\_prev} (las 10 de la hora inicial más 2 afectadas por el dato anómalo en \emph{Team Fortress 2}).
+        \item $\texttt{sube}_t = \mathbb{I}(\texttt{jugadores}_{t+1} > \texttt{jugadores}_t)$, asignando \texttt{0} a disminuciones y empates, calculada solo si existe medición válida \texttt{1hr} después. Se registraron \textbf{12 filas} sin \texttt{sube} y \textbf{0 empates exactos}, resultando \textbf{657 filas completas} para modelación.
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Validación intermedia contra la API original}
+Se contrastaron directamente registros de \texttt{data/depurada.csv} frente a los JSON originales descargados mediante \texttt{jq}:
+\begin{itemize}
+    \item \textbf{Precio:} \texttt{data/raw/ficha\_620.json} entrega \texttt{price\_overview.final = 649900} (\texttt{CLP}), transformado a \texttt{precio\_final = 6499} y \texttt{gratis = 0} en \texttt{data/depurada.csv}.
+    \item \textbf{Medición horaria:} \texttt{data/raw/med\_730\_20261124T012541Z.json} contiene \texttt{player\_count = 440397} (\texttt{result = 1}), coincidiendo exactamente con la fila de \emph{Counter-Strike 2} asignada a \texttt{2026-11-24T01:00:00Z} y \texttt{hora\_chile = 22} en \texttt{data/depurada.csv}.
+\end{itemize}
+
+\subsection{Exploración con Polars (\texttt{st explorar})}
+
+Todas las agregaciones por juego, hora de Chile, modalidad gratuita/de pago y amplitud diaria se calcularon mediante el plugin \texttt{polars} de Nushell (\texttt{polars into-df --schema}, \texttt{polars filter}, \texttt{polars group-by}, \texttt{polars agg}, \texttt{polars collect}).
+
+\begin{table}[H]
+\centering
+\caption{Resumen exploratorio por juego, mediciones válidas, faltantes y amplitud diaria (serie completa de 68 horas en grilla).}
+\label{tab:exploracion}
+\small
+\begin{tabular}{@{}rlrrrrrr@{}}
+\toprule
+\textbf{AppID} & \textbf{Nombre} & \textbf{Gratis} & \textbf{Precio (CLP)} & \textbf{Jug. prom.} & \textbf{Válidas} & \textbf{Falt.} & \textbf{Amplitud} \\
+\midrule
+730     & Counter-Strike 2    & Sí & 0      & 713\,460{,}5 & 68 & 0 & 2{,}71 \\
+570     & Dota 2              & Sí & 0      & 536\,407{,}9 & 68 & 0 & 2{,}27 \\
+578080  & PUBG: BATTLEGROUNDS & Sí & 0      & 297\,980{,}0 & 68 & 0 & 9{,}09 \\
+440     & Team Fortress 2     & Sí & 0      &  94\,174{,}8 & 67 & 1 & 1{,}29 \\
+252490  & Rust                & No & 22\,799 &  61\,182{,}0 & 68 & 0 & 2{,}04 \\
+230410  & Warframe            & Sí & 0      &  45\,078{,}4 & 68 & 0 & 1{,}71 \\
+413150  & Stardew Valley      & No &  7\,500 &  42\,137{,}4 & 68 & 0 & 3{,}02 \\
+105600  & Terraria            & No &  5\,750 &  22\,123{,}7 & 68 & 0 & 1{,}92 \\
+1245620 & ELDEN RING          & No & 45\,499 &  18\,196{,}4 & 68 & 0 & 2{,}09 \\
+620     & Portal 2            & No &  6\,499 &   1\,150{,}3 & 68 & 0 & 2{,}32 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Tres hallazgos principales sustentados en los datos}
+\begin{enumerate}
+    \item \textbf{Ciclo global marcado con máximo en la mañana chilena (13--14 UTC):} a lo largo de las 68 horas, la actividad agregada exhibe un patrón intradiario consistente: el índice relativo crece sostenidamente desde las 04:00 hasta alcanzar su máximo a las 10:00--11:00 h de Chile (\texttt{1,42} y \texttt{1,46}, equivalentes a 13:00--14:00 UTC: horario punta nocturno en Asia oriental y primera hora de la tarde en Europa), con proporciones de \texttt{sube = 1} entre \texttt{76,67\%} y \texttt{100,00\%} entre las 04:00 y 09:00 h de Chile. Por el contrario, entre las 16:00 y 19:00 h de Chile la caída es casi unánime (\texttt{10,00\%} a las 16:00 y \texttt{0,00\%} entre las 17:00 y 19:00), tocando su menor índice relativo a las 20:00 h (\texttt{0,70}).
+    \item \textbf{Brecha estructural entre juegos gratuitos y de pago, sin relación lineal clara dentro de los de pago:} los 5 juegos gratuitos promedian \textbf{338\,137,9} jugadores conectados (339 mediciones válidas) frente a \textbf{28\,958,0} en los 5 juegos de pago (340 mediciones válidas, precio promedio \texttt{17\,609 CLP}), más de 11 veces mayor. Esto produce una correlación global negativa entre \texttt{precio\_final} y \texttt{jugadores\_prom} ($r = -0{,}405$), pero al restringirse a los títulos de pago la correlación es cercana a cero ($r = +0{,}0781$, $n = 5$), resultado puramente descriptivo dado el tamaño muestral reducido ($n = 5$) y la heterogeneidad entre títulos como \emph{Rust} (\texttt{22\,799 CLP}) y \emph{Portal 2} (\texttt{6\,499 CLP}).
+    \item \textbf{Amplitudes diarias muy heterogéneas según el perfil de audiencia:} \emph{PUBG: BATTLEGROUNDS} exhibe la mayor amplitud diaria (\textbf{9,09}$\times$, oscilando entre un mínimo promedio horario de \texttt{80\,337,5} y un máximo de \texttt{730\,592,7} jugadores), seguido por \emph{Stardew Valley} (\textbf{3,02}$\times$) y \emph{Counter-Strike 2} (\textbf{2,71}$\times$). En el extremo opuesto, \emph{Team Fortress 2} (\textbf{1,29}$\times$) y \emph{Warframe} (\textbf{1,71}$\times$) presentan curvas mucho más planas durante las 24 horas.
+\end{enumerate}
+
+\subsection{Modelación (\texttt{st modelar})}
+
+\subsubsection{Motor externo elegido y separación de responsabilidades}
+Se eligió \textbf{R} (\texttt{Rscript (R) version 4.3.3 (2024-02-29)}) como motor externo porque incorpora la función estándar \texttt{glm(..., family = binomial(link = "logit"))} sin dependencias externas, resuelve la máxima verosimilitud de forma estándar y entrega directamente errores estándar y $p$-valores.
+
+Respetando estrictamente la pauta, \textbf{Nushell} realiza toda la lectura, filtrado de nulos, creación de las variables armónicas $\sin(2\pi h/24)$ y $\cos(2\pi h/24)$, partición cronológica 70/30, exportación de \texttt{train.csv} y \texttt{test.csv}, conversión del predictor lineal $\eta$ a probabilidades mediante la función sigmoide $\hat{p} = (1 + e^{-\eta})^{-1}$ y cálculo de exactitud y pérdida logarítmica. El archivo \texttt{motor\_logistico.R} recibe las tablas ya preparadas y únicamente ejecuta \texttt{glm()} y \texttt{predict(..., type = "link")}.
+
+\subsubsection{Justificación de la partición cronológica}
+La serie se divide cronológicamente (70\% más antiguo para entrenamiento y 30\% más reciente para prueba, usando un único corte temporal en \texttt{fecha\_hora\_utc} compartido por los 10 juegos) y \textbf{no} de manera aleatoria. Una partición aleatoria introduciría fuga de información temporal (\emph{data leakage}) debido a la autocorrelación horaria y a la sincronía entre títulos dentro de la misma hora, sobreestimando el desempeño fuera de muestra. Como detalle de frontera, la última hora del bloque de entrenamiento evalúa su etiqueta \texttt{sube} comparándola contra la primera hora del bloque de prueba.
+
+\subsubsection{Evaluación comparativa y coeficientes}
+Sobre las \textbf{66 horas modelables} (corte cronológico en \texttt{2026-11-25 23:00 UTC}; \textbf{457 filas} de entrenamiento y \textbf{200 filas} de prueba; proporción base de entrenamiento $p_{\text{train}} = 0{,}4923$), las Tablas~\ref{tab:metricas} y~\ref{tab:coefs} muestran el desempeño en prueba (con probabilidades acotadas a $[10^{-15}, 1-10^{-15}]$ para la pérdida logarítmica) y los coeficientes ajustados.
+
+\begin{table}[H]
+\centering
+\caption{Evaluación de las tres alternativas en el conjunto de prueba ($n = 200$).}
+\label{tab:metricas}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Alternativa} & \textbf{Exactitud (umbral 0{,}5)} & \textbf{Pérdida logarítmica} \\
+\midrule
+(a) Constante (proporción de entrenamiento) & 0{,}40 & 0{,}70 \\
+(b) Proporción por \texttt{hora\_chile} (con respaldo a (a)) & 0{,}71 & 0{,}54 \\
+(c) Regresión logística (motor R) & 0{,}71 & 0{,}52 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Coeficientes de la regresión logística estimados por R (\texttt{glm}).}
+\label{tab:coefs}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Término} & \textbf{Estimado} & \textbf{Error estándar} & \textbf{Valor $z$} & \textbf{$p$-valor} \\
+\midrule
+Intercepto              & $-0{,}19$ & $0{,}16$ & $-1{,}21$ & $0{,}23$ \\
+$\sin(2\pi h / 24)$     & $+1{,}36$ & $0{,}18$ & $+7{,}60$ & $<0{,}001$ \\
+$\cos(2\pi h / 24)$     & $+0{,}04$ & $0{,}15$ & $+0{,}26$ & $0{,}80$ \\
+\texttt{variacion\_prev} & $+5{,}43$ & $1{,}19$ & $+4{,}56$ & $<0{,}001$ \\
+\texttt{gratis}         & $+0{,}12$ & $0{,}22$ & $+0{,}53$ & $0{,}59$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Interpretación de los resultados y coeficientes:}
+\begin{itemize}
+    \item \textbf{Efecto medible de la hora del día y la variación previa:} tanto $\sin(2\pi h/24)$ ($\hat{\beta} = +1{,}36$, $z = +7{,}60$, $p < 0{,}001$) como \texttt{variacion\_prev} ($\hat{\beta} = +5{,}43$, $z = +4{,}56$, $p < 0{,}001$) son altamente significativos. El signo positivo de $\sin(2\pi h/24)$ captura el ascenso sostenido durante la primera mitad del día en Chile frente a la caída vespertina; el coeficiente positivo de \texttt{variacion\_prev} recoge la inercia de corto plazo de la serie. En cambio, $\cos(2\pi h/24)$ ($p = 0{,}80$) y \texttt{gratis} ($p = 0{,}59$) no resultan significativos: la modalidad gratuita explica el \emph{volumen} de jugadores, pero no la dirección del cambio horario.
+    \item \textbf{Desempeño relativo de los modelos:} tanto la tabla por \texttt{hora\_chile} (b) como la regresión logística (c) superan con claridad a la línea base constante (a), elevando la exactitud de \texttt{0,40} a \texttt{0,71} y reduciendo la pérdida logarítmica desde \texttt{0,70}. Entre ambos modelos informativos, la regresión logística logra la mejor calibración probabilística (menor pérdida logarítmica: \texttt{0,52} frente a \texttt{0,54}), al incorporar \texttt{variacion\_prev} y suavizar la curva horaria evitando probabilidades empíricas extremas (como \texttt{0,00} o \texttt{1,00}) estimadas con pocos días por hora.
+\end{itemize}
+
+\subsubsection{Naturaleza de la medición, ruido y composición de la muestra}
+\begin{itemize}
+    \item \textbf{Qué mide \texttt{GetNumberOfCurrentPlayers}:} según la documentación oficial de la API de Steamworks (\texttt{ISteamUserStats}), el endpoint devuelve el número total de jugadores que se encuentran actualmente ejecutando la aplicación especificada en el instante de la consulta. Es una lectura puntual de sesiones concurrentes abiertas en la aplicación en ese momento, sin desglose regional ni de actividad dentro del cliente; en dos consultas separadas por 65 s se obtuvo el mismo valor (\texttt{632\,433}), lo cual no es un comportamiento documentado por Valve y se registra solo como observación empírica.
+    
+    \item \textbf{Magnitud del ruido y su efecto en \texttt{sube}:} el \textbf{9,88\%} de los pares de horas consecutivas (\texttt{66/668}) presentó una variación relativa menor al 1\%. En esos tramos casi planos, pequeñas fluctuaciones aleatorias bastan para invertir la etiqueta binaria \texttt{sube} entre \texttt{0} y \texttt{1}, imponiendo un límite práctico a la exactitud clasificatoria.
+    \item \textbf{Composición y concentración de la muestra:} la muestra es equilibrada en cantidad de títulos (5 gratuitos y 5 de pago) y en cobertura temporal (68 mediciones válidas en 9 juegos y 67 en \emph{Team Fortress 2}), pero el volumen absoluto de jugadores está altamente concentrado: \emph{Counter-Strike 2} (38,98\%), \emph{Dota 2} (29,30\%) y \emph{PUBG: BATTLEGROUNDS} (16,28\%) reúnen el \textbf{84,56\%} de los jugadores observados, frente al \textbf{0,06\%} de \emph{Portal 2}. Aunque en la regresión logística cada observación juego-hora pesa por igual, las conclusiones se circunscriben a títulos consolidados de alta actividad y no deben extrapolarse sin cautela a lanzamientos recientes o juegos de nicho.
+\end{itemize}
+
+% ==============================================================================
+% 4. COMANDOS AVANZADOS
+% ==============================================================================
+\section{Comandos Avanzados (Parte 3)}
+
+\subsection{Comparador de juegos (\texttt{st versus <appid1> <appid2>})}
+
+El comando obtiene en serie la ficha (caché 12 h), los jugadores en vivo (sin caché) y los logros globales de ambos títulos. La \textbf{rareza promedio de logros} se define como el promedio de $(100 - \text{porcentaje de desbloqueo})$ sobre todos los logros del juego (a mayor valor, más difíciles o exclusivos son sus logros). Para evaluar el \textbf{valor por precio} se definió el indicador:
+\[
+    \text{valor\_por\_precio} = \frac{\ln(1 + \text{jugadores})}{\ln\!\left(1 + \dfrac{\text{precio\_final}}{1000}\right) + 1}
+\]
+\textbf{Justificación:} el numerador usa escala logarítmica para comparar comunidades de distinta magnitud sin que los títulos masivos aplasten la escala; el denominador expresa el precio en miles de pesos chilenos y suma $1$ para evitar divisiones por cero en juegos gratuitos ($\text{precio\_final} = 0 \Rightarrow \text{denominador} = 1$) y penalizar de forma cóncava precios crecientes.
+
+\begin{table}[H]
+\centering
+\caption{Ejemplos reales de ejecución de \texttt{st versus}.}
+\label{tab:versus}
+\small
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+\textbf{Comparación} & \textbf{Juego} & \textbf{Precio (CLP)} & \textbf{Jugadores} & \textbf{Logros} & \textbf{Rareza (\%)} & \textbf{Valor/Precio} \\
+\midrule
+\texttt{620 vs 730} & Portal 2 & 6\,499 & 1\,137 & 51 & 75{,}87 & 2{,}3342 \\
+                    & Counter-Strike 2 & 0 & 432\,113 & 1 & 58{,}70 & \textbf{12{,}9764} \\
+\midrule
+\texttt{620 vs 1245620} & Portal 2 & 6\,499 & 1\,137 & 51 & 75{,}87 & \textbf{2{,}3342} \\
+                        & ELDEN RING & 45\,499 & 16\,612 & 42 & 58{,}41 & 2{,}0081 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+En la Tabla~\ref{tab:versus}, \emph{Counter-Strike 2} obtiene un indicador superior frente a \emph{Portal 2} al ser gratuito y concentrar cientos de miles de jugadores; entre dos juegos de pago, \emph{Portal 2} (\texttt{6\,499 CLP}) supera en este indicador a \emph{ELDEN RING} (\texttt{45\,499 CLP}), cuyo mayor número de jugadores no compensa un precio siete veces mayor.
+
+\subsection{Pronóstico en vivo (\texttt{st pronostico <appid>})}
+
+El comando consulta en tiempo real los jugadores conectados del \texttt{appid}, recupera su última medición válida en \texttt{data/depurada.csv}, calcula la \texttt{variacion\_prev} actual y la \texttt{hora\_chile} vigente, y estima la probabilidad de subida en la próxima hora mediante: (i) la tabla horaria del pipeline (\texttt{data/modelo/tabla\_hora.csv}) y (ii) el modelo logístico evaluado íntegramente en Nushell usando los coeficientes exportados por R (\texttt{data/modelo/coeficientes.csv}). Dado que \texttt{variacion\_prev} se calcula respecto a la última medición guardada en \texttt{data/depurada.csv}, su interpretación como cambio horario es más directa cuando \texttt{horas\_desde\_ultima} se aproxima a \texttt{1,0} hora.
+
+En una prueba posterior al cierre sobre \emph{Counter-Strike 2} (AppID \texttt{730}, a las 19:00 h de Chile, \texttt{632\,433} jugadores frente a \texttt{932\,095} en la última medición de la serie, \texttt{horas\_desde\_ultima = 2,67} y \texttt{variacion\_prev = -0,39}), ambos métodos coincidieron en \emph{No sube}: $\hat{p}_{\text{tabla}} = 0{,}00$ y $\hat{p}_{\text{logit}} = 0{,}03$ (diferencia de $+0{,}03$). Cabe notar que ese lapso abarca casi tres horas reales y que dos consultas consecutivas separadas por 65 s devolvieron el mismo valor (\texttt{632\,433}), por lo que al tener \texttt{horas\_desde\_ultima = 2,67} y \texttt{variacion\_prev = -0,39} este caso queda fuera del dominio habitual de entrenamiento (pasos de ~1 h) y se presenta únicamente como ejemplo ilustrativo.
+
+\paragraph{¿En qué casos difieren ambos métodos?}
+Ambos métodos pueden diferir en magnitud o dirección cuando: (1) una hora presenta proporciones empíricas extremas (\texttt{0,00} o \texttt{1,00}) en la tabla histórica, mientras la regresión logística entrega probabilidades suavizadas mediante la curva sinusoidal (como ocurrió a las 17:00 h); (2) una hora no aparece en entrenamiento y la tabla recurre al respaldo constante; o (3) existe una variación reciente pronunciada (\texttt{variacion\_prev} alejado de cero), información que la tabla por hora ignora pero que tiene un peso elevado ($\hat{\beta} = +5{,}43$) en el modelo logístico.
+
+% ==============================================================================
+% 5. CONCLUSIONES
+% ==============================================================================
+\section{Conclusiones}
+
+Se implementó íntegramente \textbf{Player One} en Nushell dentro de un único archivo reutilizable (\texttt{player\_one.nu}), integrando consultas seriales con caché en disco y manejo de errores, depuración local paralela con \texttt{jq} y GNU \texttt{parallel}, exploración con el plugin \texttt{polars} y ajuste logístico en R (\texttt{4.3.3}) con preprocesamiento y evaluación en Nushell. Los contrastes independientes con \texttt{curl} y \texttt{jq} validaron las extracciones y transformaciones, mientras que la serie final de 72 rondas (68 horas en grilla) confirmó una estacionalidad horaria marcada en hora de Chile. En evaluación fuera de muestra, tanto la tabla por hora (b) como la regresión logística (c) superaron a la línea base constante (exactitud \texttt{0,71} frente a \texttt{0,40}), mostrando entre sí un desempeño comparable y ligeramente favorable al modelo logístico en pérdida logarítmica (\texttt{0,52} frente a \texttt{0,54}). Como limitaciones metodológicas se documentan la dependencia entre títulos medidos simultáneamente, la presencia de un \texttt{9,88\%} de ruido de corto plazo y la variación de intervalos reales tras las colisiones horarias generadas por la deriva de \texttt{sleep} en WSL2, cuya solución consiste en anclar cada ronda a un instante objetivo relativo al inicio (\texttt{t0}).
+
+\end{document}

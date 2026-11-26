@@ -1,0 +1,4 @@
+modelo,exactitud,perdida_log,n_prueba
+(a) Constante (prop. train),0.4,0.6963,200
+(b) Por hora_chile (train),0.71,0.5371,200
+(c) Regresión logística (R),0.715,0.5244,200
